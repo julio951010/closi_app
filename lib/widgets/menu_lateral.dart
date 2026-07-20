@@ -36,7 +36,7 @@ class MenuLateral extends StatelessWidget {
                     radius: 40,
                     backgroundColor: theme.primaryColor,
                     child: Text(
-                      usuario.nombre[0].toUpperCase(),
+                      (usuario.nombre.isNotEmpty ? usuario.nombre[0] : '?').toUpperCase(),
                       style: const TextStyle(fontSize: 32, color: Colors.white),
                     ),
                   ),

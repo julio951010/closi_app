@@ -2,6 +2,8 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import '../database/negocio_dao.dart';
 import '../services/tema_service.dart';
+import '../services/tema_mapa_service.dart';
+import '../services/radio_busqueda_service.dart';
 
 class ConfiguracionScreen extends StatefulWidget {
   const ConfiguracionScreen({super.key});
@@ -13,21 +15,32 @@ class ConfiguracionScreen extends StatefulWidget {
 class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
   final NegocioDao _negocioDao = NegocioDao();
   bool _notificaciones = true;
-  double _radioBusqueda = 5.0;
 
   @override
   void initState() {
     super.initState();
     TemaService.modo.addListener(_onThemeChanged);
+    RadioBusquedaService.radioKm.addListener(_onRadioChanged);
+    TemaMapaService.actual.addListener(_onTemaMapaChanged);
   }
 
   @override
   void dispose() {
     TemaService.modo.removeListener(_onThemeChanged);
+    RadioBusquedaService.radioKm.removeListener(_onRadioChanged);
+    TemaMapaService.actual.removeListener(_onTemaMapaChanged);
     super.dispose();
   }
 
   void _onThemeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onRadioChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onTemaMapaChanged() {
     if (mounted) setState(() {});
   }
 
@@ -53,6 +66,7 @@ class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
   @override
   Widget build(BuildContext context) {
     final temaActual = TemaService.modo.value;
+    final temaMapa = TemaMapaService.actual.value;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Configuración')),
@@ -75,14 +89,17 @@ class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
           ListTile(
             leading: const Icon(Icons.tune),
             title: const Text('Radio de búsqueda'),
-            subtitle: Text('${_radioBusqueda.toStringAsFixed(0)} km'),
+            subtitle: Text('${RadioBusquedaService.radioKm.value.toStringAsFixed(0)} km'),
             trailing: SizedBox(
               width: 150,
               child: Slider(
-                value: _radioBusqueda,
-                min: 1, max: 20, divisions: 19,
-                label: '${_radioBusqueda.toStringAsFixed(0)} km',
-                onChanged: (v) => setState(() => _radioBusqueda = v),
+                value: RadioBusquedaService.radioKm.value,
+                min: RadioBusquedaService.minimo,
+                max: RadioBusquedaService.maximo,
+                divisions: (RadioBusquedaService.maximo - RadioBusquedaService.minimo).round(),
+                label: '${RadioBusquedaService.radioKm.value.toStringAsFixed(0)} km',
+                onChanged: (v) => RadioBusquedaService.radioKm.value = v,
+                onChangeEnd: (v) => RadioBusquedaService.establecer(v),
               ),
             ),
           ),
@@ -99,6 +116,20 @@ class _ConfiguracionScreenState extends State<ConfiguracionScreen> {
             title: const Text('Limpiar caché'),
             subtitle: const Text('Elimina negocios descargados'),
             onTap: _limpiarCache,
+          ),
+          const Divider(),
+          ExpansionTile(
+            leading: const Icon(Icons.map),
+            title: const Text('Tema del mapa'),
+            subtitle: Text(TemaMapaService.nombres[temaMapa] ?? temaMapa),
+            initiallyExpanded: false,
+            children: TemaMapaService.temas.map((tema) => RadioListTile<String>(
+              title: Text(TemaMapaService.nombres[tema] ?? tema),
+              subtitle: Text('$tema.xml'),
+              value: tema,
+              groupValue: temaMapa,
+              onChanged: (v) { if (v != null) TemaMapaService.establecer(v); },
+            )).toList(),
           ),
         ],
       ),

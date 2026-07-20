@@ -5,8 +5,9 @@ import '../database/negocio_dao.dart';
 import '../models/negocio.dart';
 import '../repositories/usuario_repository.dart';
 import 'connectivity_service.dart';
+import 'negocio_service.dart';
 import 'package:postgres/postgres.dart';
-import '../config/database_config.dart';
+import '../database/pg_connection.dart';
 
 /// Motor de sincronización offline → nube.
 ///
@@ -15,12 +16,6 @@ import '../config/database_config.dart';
 class SyncService {
   static final ColaSincronizacionDao _cola = ColaSincronizacionDao();
   static final UsuarioRepository _usuarioRepo = UsuarioRepository();
-
-  static String _host = DatabaseConfig.host;
-  static int _port = DatabaseConfig.port;
-  static String _database = DatabaseConfig.database;
-  static String _usuario = DatabaseConfig.username;
-  static String _password = DatabaseConfig.password;
 
   static bool _sincronizando = false;
 
@@ -63,13 +58,7 @@ class SyncService {
   static Future<void> _asegurarUsuarioEnNube(
       String id, String nombre, String? email,
       {String? passwordHash}) async {
-    final conn = await Connection.open(Endpoint(
-      host: _host,
-      port: _port,
-      database: _database,
-      username: _usuario,
-        password: _password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+    final conn = await abrirConexionPostgres();
     try {
       await conn.execute(Sql.named('''
         INSERT INTO usuarios (id, nombre, email, password_hash)
@@ -125,13 +114,7 @@ class SyncService {
 
   static Future<void> _sincronizarNegocio(String operacion,
       String id, Map<String, dynamic> data, String propietarioId) async {
-    final conn = await Connection.open(Endpoint(
-      host: _host,
-      port: _port,
-      database: _database,
-      username: _usuario,
-        password: _password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+    final conn = await abrirConexionPostgres();
     try {
       if (operacion == 'delete') {
         await conn.execute(Sql.named('DELETE FROM negocios WHERE id = @id'),
@@ -139,9 +122,12 @@ class SyncService {
         return;
       }
 
+      // 'ubicacion' es GEOGRAPHY(POINT) en el esquema real (local y
+      // Supabase); no existen columnas lat/lon planas. ST_MakePoint espera
+      // (longitud, latitud) en ese orden.
       await conn.execute(Sql.named('''
-        INSERT INTO negocios (id, propietario_id, categoria_id, nombre, descripcion, direccion, telefono, whatsapp, email, sitio_web, redes_sociales, horario, metodo_pago, lat, lon, estado)
-        VALUES (@id, @propietarioId, @categoriaId, @nombre, @descripcion, @direccion, @telefono, @whatsapp, @email, @sitioWeb, @redesSociales, @horario, @metodoPago, @lat, @lon, @estado)
+        INSERT INTO negocios (id, propietario_id, categoria_id, nombre, descripcion, direccion, telefono, whatsapp, email, sitio_web, redes_sociales, horario, metodo_pago, ubicacion, estado)
+        VALUES (@id, @propietarioId, @categoriaId, @nombre, @descripcion, @direccion, @telefono, @whatsapp, @email, @sitioWeb, @redesSociales, @horario, @metodoPago, ST_MakePoint(@lon, @lat)::geography, @estado)
         ON CONFLICT (id) DO UPDATE SET
           propietario_id = EXCLUDED.propietario_id,
           categoria_id = EXCLUDED.categoria_id,
@@ -155,8 +141,7 @@ class SyncService {
           redes_sociales = EXCLUDED.redes_sociales,
           horario = EXCLUDED.horario,
           metodo_pago = EXCLUDED.metodo_pago,
-          lat = EXCLUDED.lat,
-          lon = EXCLUDED.lon,
+          ubicacion = EXCLUDED.ubicacion,
           estado = EXCLUDED.estado
       '''), parameters: {
         'id': id,
@@ -172,8 +157,8 @@ class SyncService {
         'redesSociales': data['redes_sociales'],
         'horario': data['horario'],
         'metodoPago': data['metodo_pago'],
-        'lat': (data['lat'] as num).toDouble(),
-        'lon': (data['lon'] as num).toDouble(),
+        'lat': (data['lat'] as num?)?.toDouble(),
+        'lon': (data['lon'] as num?)?.toDouble(),
         'estado': data['estado'],
       });
     } finally {
@@ -183,13 +168,7 @@ class SyncService {
 
   static Future<void> _sincronizarFavorito(
       String operacion, Map<String, dynamic> data) async {
-    final conn = await Connection.open(Endpoint(
-      host: _host,
-      port: _port,
-      database: _database,
-      username: _usuario,
-        password: _password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+    final conn = await abrirConexionPostgres();
     try {
       if (operacion == 'create') {
         await conn.execute(Sql.named('''
@@ -215,13 +194,7 @@ class SyncService {
 
   static Future<void> _sincronizarCalificacion(
       String operacion, Map<String, dynamic> data) async {
-    final conn = await Connection.open(Endpoint(
-      host: _host,
-      port: _port,
-      database: _database,
-      username: _usuario,
-        password: _password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+    final conn = await abrirConexionPostgres();
     try {
       if (operacion == 'upsert') {
         await conn.execute(Sql.named('''
@@ -250,13 +223,7 @@ class SyncService {
 
   static Future<void> _sincronizarOpinion(
       String operacion, Map<String, dynamic> data) async {
-    final conn = await Connection.open(Endpoint(
-      host: _host,
-      port: _port,
-      database: _database,
-      username: _usuario,
-        password: _password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+    final conn = await abrirConexionPostgres();
     try {
       if (operacion == 'upsert') {
         await conn.execute(Sql.named('''
@@ -287,13 +254,7 @@ class SyncService {
 
   static Future<void> _sincronizarProducto(
       String operacion, Map<String, dynamic> data) async {
-    final conn = await Connection.open(Endpoint(
-      host: _host,
-      port: _port,
-      database: _database,
-      username: _usuario,
-        password: _password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+    final conn = await abrirConexionPostgres();
     try {
       if (operacion == 'delete') {
         await conn.execute(Sql.named('DELETE FROM productos_servicios WHERE id = @id'),
@@ -332,16 +293,12 @@ class SyncService {
   static Future<void> descargarNegociosCache() async {
     if (!await ConnectivityService.hayConexion()) return;
 
-    final conn = await Connection.open(Endpoint(
-      host: _host,
-      port: _port,
-      database: _database,
-      username: _usuario,
-        password: _password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+    final conn = await abrirConexionPostgres();
     try {
       final result = await conn.execute(Sql.named('''
-        SELECT id, categoria_id, nombre, descripcion, direccion, telefono, horario, lat, lon, calificacion_promedio, total_resenas, es_destacado, estado
+        SELECT id, categoria_id, nombre, descripcion, direccion, telefono, horario,
+          ST_Y(ubicacion::geometry) AS lat, ST_X(ubicacion::geometry) AS lon,
+          calificacion_promedio, total_resenas, es_destacado, estado
         FROM negocios
         WHERE estado = @estado
         ORDER BY nombre ASC
@@ -368,6 +325,7 @@ class SyncService {
       }).toList();
 
       await NegocioDao().guardarLoteCache(negocios);
+      NegocioService.cacheActualizada.value++;
       debugPrint('SyncService: ${negocios.length} negocios descargados a la caché local');
     } catch (e) {
       debugPrint('SyncService: error al descargar caché — $e');

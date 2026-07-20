@@ -8,6 +8,7 @@ import '../models/categoria.dart';
 import '../models/favorito.dart';
 import '../models/negocio.dart';
 import '../services/negocio_service.dart';
+import '../services/radio_busqueda_service.dart';
 import '../services/sesion_service.dart';
 import '../services/sync_service.dart';
 import '../widgets/cabecera_home.dart';
@@ -35,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
   StreamSubscription<List<Negocio>>? _negocioSub;
   StreamSubscription<Position>? _posicionSub;
   VoidCallback? _pgListener;
+  VoidCallback? _radioListener;
   double _lat = 23.113592;
   double _lon = -82.366592;
 
@@ -46,6 +48,10 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) setState(() => _pgDesconectado = !NegocioService.postgresDisponible.value);
     };
     NegocioService.postgresDisponible.addListener(_pgListener!);
+    _radioListener = () {
+      if (mounted) unawaited(_consultarNegocios());
+    };
+    RadioBusquedaService.radioKm.addListener(_radioListener!);
     _iniciar();
   }
 
@@ -55,6 +61,9 @@ class _HomeScreenState extends State<HomeScreen> {
     _posicionSub?.cancel();
     if (_pgListener != null) {
       NegocioService.postgresDisponible.removeListener(_pgListener!);
+    }
+    if (_radioListener != null) {
+      RadioBusquedaService.radioKm.removeListener(_radioListener!);
     }
     super.dispose();
   }
@@ -126,6 +135,7 @@ class _HomeScreenState extends State<HomeScreen> {
     final negocios = await NegocioService.consultarCercaDe(
       lat: _lat,
       lon: _lon,
+      radioKm: RadioBusquedaService.radioKm.value,
     );
     _aplicarNegocios(negocios);
   }
@@ -198,9 +208,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       body: SafeArea(
         bottom: false,
-        child: _cargando
-            ? const SkeletonHome()
-            : Column(
+        child: Column(
           children: [
             if (_pgDesconectado)
               Container(
@@ -228,7 +236,9 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
             Expanded(
-              child: SingleChildScrollView(
+              child: _cargando
+                  ? const SkeletonHome()
+                  : SingleChildScrollView(
                 child: Column(
                   children: [
                     const SizedBox(height: 16),

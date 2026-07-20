@@ -1,6 +1,6 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:postgres/postgres.dart';
-import '../config/database_config.dart';
+import '../database/pg_connection.dart';
 import 'package:uuid/uuid.dart';
 import '../models/categoria.dart';
 import '../services/permisos_service.dart';
@@ -80,13 +80,7 @@ void _snack(BuildContext context, String msg, {bool ok = true}) {
 }
 
 Future<Connection> _db() async {
-  return Connection.open(Endpoint(
-    host: DatabaseConfig.host,
-    port: DatabaseConfig.port,
-    database: DatabaseConfig.database,
-    username: DatabaseConfig.username,
-    password: DatabaseConfig.password,
-  ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+  return abrirConexionPostgres();
 }
 
 // ──────────────────────────────────────────────────────────────────
@@ -236,7 +230,7 @@ class _UsuariosTabState extends State<_UsuariosTab> {
                   itemBuilder: (_, i) {
                     final u = lista[i];
                     return ListTile(
-                      leading: CircleAvatar(child: Text((u['nombre'] as String? ?? '?')[0].toUpperCase())),
+                      leading: CircleAvatar(child: Text(((u['nombre'] as String? ?? '?').isNotEmpty ? (u['nombre'] as String? ?? '?')[0] : '?').toUpperCase())),
                       title: Text(u['nombre'] as String? ?? ''),
                       subtitle: Text('${u['email']}  •  ${u['rol']}'),
                       trailing: PopupMenuButton<String>(

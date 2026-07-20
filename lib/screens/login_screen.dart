@@ -7,7 +7,7 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import 'package:postgres/postgres.dart';
-import '../config/database_config.dart';
+import '../database/pg_connection.dart';
 import '../database/database_helper.dart';
 import '../models/perfil.dart';
 import '../services/sesion_service.dart';
@@ -82,13 +82,7 @@ class _LoginScreenState extends State<LoginScreen> {
       Perfil? perfil;
 
       try {
-        final conn = await Connection.open(Endpoint(
-          host: DatabaseConfig.host,
-          port: DatabaseConfig.port,
-          database: DatabaseConfig.database,
-          username: DatabaseConfig.username,
-          password: DatabaseConfig.password,
-        ));
+        final conn = await abrirConexionPostgres();
         final filas = await conn.execute(Sql.named('SELECT * FROM usuarios WHERE email = @email'), parameters: {'email': email});
         await conn.close();
         if (filas.isEmpty) {
@@ -113,8 +107,8 @@ class _LoginScreenState extends State<LoginScreen> {
               ? row['creado_en'] as DateTime
               : DateTime.tryParse(row['creado_en'] as String? ?? ''),
         );
-      } catch (_) {
-        debugPrint('LOGIN: Supabase no disponible, usando caché local');
+      } catch (e) {
+        debugPrint('LOGIN: fallo conexión Postgres local: $e');
 
         final db = await DatabaseHelper.database;
         final filas = await db.query('usuario', where: 'email = ?', whereArgs: [email]);
@@ -167,13 +161,7 @@ class _LoginScreenState extends State<LoginScreen> {
       final telefono = _telefonoCtrl.text.trim();
 
       final hash = BCrypt.hashpw(_passwordCtrl.text, BCrypt.gensalt());
-      final conn = await Connection.open(Endpoint(
-        host: DatabaseConfig.host,
-        port: DatabaseConfig.port,
-        database: DatabaseConfig.database,
-        username: DatabaseConfig.username,
-        password: DatabaseConfig.password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+      final conn = await abrirConexionPostgres();
       await conn.execute(Sql.named(
         'INSERT INTO usuarios (id, nombre, email, telefono, password_hash) VALUES (@id, @nombre, @email, @telefono, @hash)',
       ), parameters: {

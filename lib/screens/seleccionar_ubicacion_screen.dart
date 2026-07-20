@@ -21,6 +21,7 @@ class _SeleccionarUbicacionScreenState extends State<SeleccionarUbicacionScreen>
   double _lon = -82.366592;
   bool _pinColocado = false;
   bool _cargando = false;
+  int _zoomActual = 13;
   MethodChannel? _channel;
 
   @override
@@ -52,6 +53,18 @@ class _SeleccionarUbicacionScreenState extends State<SeleccionarUbicacionScreen>
       _pinColocado = true;
     });
     _channel?.invokeMethod('placePin', {'lat': _lat, 'lon': _lon});
+  }
+
+  void _acercar() {
+    if (_zoomActual >= 20) return;
+    setState(() => _zoomActual++);
+    _channel?.invokeMethod('setZoom', {'zoom': _zoomActual});
+  }
+
+  void _alejar() {
+    if (_zoomActual <= 3) return;
+    setState(() => _zoomActual--);
+    _channel?.invokeMethod('setZoom', {'zoom': _zoomActual});
   }
 
   Future<void> _confirmar() async {
@@ -126,6 +139,17 @@ class _SeleccionarUbicacionScreenState extends State<SeleccionarUbicacionScreen>
             onMapTapped: _onMapTapped,
             onMapaCreado: _onMapaCreado,
           ),
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 12,
+            right: 16,
+            child: Column(
+              children: [
+                _BotonZoom(Icons.add_rounded, _acercar, _zoomActual < 20),
+                const SizedBox(height: 2),
+                _BotonZoom(Icons.remove_rounded, _alejar, _zoomActual > 3),
+              ],
+            ),
+          ),
           if (!_pinColocado)
             Positioned(
               left: 0,
@@ -167,6 +191,34 @@ class _SeleccionarUbicacionScreenState extends State<SeleccionarUbicacionScreen>
                     padding: const EdgeInsets.symmetric(vertical: 16),
                   ),
                 ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BotonZoom extends StatelessWidget {
+  final IconData icono;
+  final VoidCallback onTap;
+  final bool activo;
+  const _BotonZoom(this.icono, this.onTap, this.activo);
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: activo ? onTap : null,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: activo ? 0.85 : 0.35),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.4), width: 1),
+        ),
+        child: Icon(
+          icono,
+          color: (activo ? const Color(0xFF1245A8) : Theme.of(context).colorScheme.onSurface).withValues(alpha: activo ? 0.85 : 0.4),
+          size: 22,
         ),
       ),
     );

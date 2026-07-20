@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 
 class GaleriaFotos extends StatelessWidget {
@@ -7,6 +8,10 @@ class GaleriaFotos extends StatelessWidget {
     super.key,
     required this.urls,
   });
+
+  Widget _placeholderIcon(BuildContext context) {
+    return Icon(Icons.image, size: 40, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -69,6 +74,7 @@ class GaleriaFotos extends StatelessWidget {
             );
           }
 
+          final url = urls[index];
           return Container(
             width: 120,
             margin: const EdgeInsets.only(right: 8),
@@ -81,12 +87,13 @@ class GaleriaFotos extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // Placeholder de foto
-                  Icon(
-                    Icons.image,
-                    size: 40,
-                    color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.5),
-                  ),
+                  url.startsWith('http')
+                      ? Image.network(url, fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => _placeholderIcon(context))
+                      : (File(url).existsSync()
+                          ? Image.file(File(url), fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => _placeholderIcon(context))
+                          : _placeholderIcon(context)),
                   Positioned(
                     bottom: 0,
                     left: 0,

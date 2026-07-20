@@ -6,6 +6,8 @@ import 'package:geolocator/geolocator.dart';
 import '../database/negocio_dao.dart';
 import '../models/negocio.dart';
 import '../services/negocio_service.dart';
+import '../services/radio_busqueda_service.dart';
+import '../services/tema_mapa_service.dart';
 import '../services/sesion_service.dart';
 import '../widgets/mapa_offline.dart';
 import 'detalle_negocio_screen.dart';
@@ -29,6 +31,8 @@ class _MapaScreenState extends State<MapaScreen> {
   double _lon = -82.366592;
   StreamSubscription<Position>? _posicionSub;
   StreamSubscription<List<Negocio>>? _negocioSub;
+  VoidCallback? _radioListener;
+  VoidCallback? _cacheListener;
   static const _centroDefault = Coordenada(23.113592, -82.366592);
   static const double _alturaNav = 96.0;
   static const double _alturaPestana = 80.0;
@@ -36,7 +40,6 @@ class _MapaScreenState extends State<MapaScreen> {
   // Control del mapa
   MethodChannel? _mapaChannel;
   int _zoomActual = 13;
-  static const double _radioBusqueda = 15; // km
 
   int _zoomParaRadio(double km) =>
       (13 + (log(18 / km) / ln2)).round().clamp(8, 18);
@@ -47,7 +50,15 @@ class _MapaScreenState extends State<MapaScreen> {
     _negocioSub = NegocioService.stream.listen((negocios) {
       _cargarNegociosCerca(yCache: false);
     });
-    _zoomActual = _zoomParaRadio(_radioBusqueda);
+    _zoomActual = _zoomParaRadio(RadioBusquedaService.radioKm.value);
+    _radioListener = () {
+      if (!mounted) return;
+      setState(() => _zoomActual = _zoomParaRadio(RadioBusquedaService.radioKm.value));
+      _cargarNegociosCerca(yCache: false);
+    };
+    RadioBusquedaService.radioKm.addListener(_radioListener!);
+    _cacheListener = () => _cargarNegociosCerca();
+    NegocioService.cacheActualizada.addListener(_cacheListener!);
     if (widget.negocioDestacado != null) {
       final n = widget.negocioDestacado!;
       _lat = n.lat;
@@ -65,6 +76,12 @@ class _MapaScreenState extends State<MapaScreen> {
   void dispose() {
     _posicionSub?.cancel();
     _negocioSub?.cancel();
+    if (_cacheListener != null) {
+      NegocioService.cacheActualizada.removeListener(_cacheListener!);
+    }
+    if (_radioListener != null) {
+      RadioBusquedaService.radioKm.removeListener(_radioListener!);
+    }
     super.dispose();
   }
 
@@ -90,7 +107,7 @@ class _MapaScreenState extends State<MapaScreen> {
     _posicionSub = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 100,
+        distanceFilter: 5,
       ),
     ).listen((pos) {
       _actualizarUbicacion(pos);
@@ -109,11 +126,21 @@ class _MapaScreenState extends State<MapaScreen> {
   Future<void> _cargarNegociosCerca({bool yCache = true}) async {
     try {
       final negociosPropios = await _negocioDao.obtenerPropios(SesionService.usuarioId);
-      final negociosCerca = await NegocioService.consultarCercaDe(lat: _lat, lon: _lon);
+      final negociosCerca = await NegocioService.consultarCercaDe(
+        lat: _lat,
+        lon: _lon,
+        radioKm: RadioBusquedaService.radioKm.value,
+      );
       if (mounted) {
-        setState(() {
-          _negocios = [...negociosPropios, ...negociosCerca];
-        });
+        final distancias = {for (final n in negociosCerca) if (n.distancia != null) n.id: n.distancia!};
+        final ids = <String>{};
+        _negocios = [...negociosPropios, ...negociosCerca]
+            .where((n) => ids.add(n.id))
+            .toList();
+        for (final n in _negocios) {
+          n.distancia ??= distancias[n.id];
+        }
+        setState(() {});
       }
     } catch (e) {
       debugPrint('Error al cargar negocios para el mapa: $e');
@@ -125,6 +152,12 @@ class _MapaScreenState extends State<MapaScreen> {
     if (widget.negocioDestacado != null) {
       final n = widget.negocioDestacado!;
       channel.invokeMethod('placePin', {'lat': n.lat, 'lon': n.lon});
+    }
+    if (_miUbicacion != null) {
+      channel.invokeMethod('setMyLocation', {
+        'lat': _miUbicacion!.latitude,
+        'lon': _miUbicacion!.longitude,
+      });
     }
   }
 
@@ -179,22 +212,7 @@ class _MapaScreenState extends State<MapaScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Configuración del mapa',
-                style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 20),
-            _OpcionMapa(icono: Icons.layers_outlined, label: 'Capas del mapa'),
-            _OpcionMapa(icono: Icons.straighten_outlined, label: 'Unidades de distancia'),
-            _OpcionMapa(icono: Icons.filter_list_rounded, label: 'Filtrar por categoría'),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
+      builder: (_) => _ConfiguracionMapa(),
     );
   }
 
@@ -441,26 +459,63 @@ class _EscalaMapa extends StatelessWidget {
   }
 }
 
-class _OpcionMapa extends StatelessWidget {
-  final IconData icono;
-  final String label;
-  const _OpcionMapa({required this.icono, required this.label});
+class _ConfiguracionMapa extends StatefulWidget {
+  @override
+  State<_ConfiguracionMapa> createState() => _ConfiguracionMapaState();
+}
+
+class _ConfiguracionMapaState extends State<_ConfiguracionMapa> {
+  @override
+  void initState() {
+    super.initState();
+    TemaMapaService.actual.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    TemaMapaService.actual.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      leading: Container(
-        width: 40, height: 40,
-        decoration: BoxDecoration(
-          color: const Color(0xFF1245A8).withValues(alpha: 0.08),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Icon(icono, color: const Color(0xFF1245A8), size: 20),
+    final temaMapa = TemaMapaService.actual.value;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.map, size: 20),
+              const SizedBox(width: 8),
+              Text('Tema del mapa',
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
+              const Spacer(),
+              GestureDetector(
+                onTap: () => Navigator.pop(context),
+                child: Icon(Icons.close, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          ...TemaMapaService.temas.map((tema) => RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            title: Text(TemaMapaService.nombres[tema] ?? tema),
+            subtitle: Text('$tema.xml', style: const TextStyle(fontSize: 12)),
+            value: tema,
+            groupValue: temaMapa,
+            dense: true,
+            visualDensity: VisualDensity.compact,
+            onChanged: (v) { if (v != null) TemaMapaService.establecer(v); },
+          )),
+        ],
       ),
-      title: Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-      trailing: Icon(Icons.chevron_right, color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.4), size: 20),
-      onTap: () => Navigator.pop(context),
     );
   }
 }

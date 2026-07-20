@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rendertheme version="1" xmlns="http://opensciencemap.org/rendertheme">
+    <style-text fill="#FF0000" id="name-style" k="name" size="20" stroke="#FFFFFF" stroke-width="3.0" />
+    <m e="way" k="name">
+        <text use="name-style" />
+    </m>
+    <m e="node" k="name">
+        <text use="name-style" />
+    </m>
+</rendertheme>

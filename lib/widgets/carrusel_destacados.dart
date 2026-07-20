@@ -238,7 +238,21 @@ class _TarjetaDestacado extends StatelessWidget {
     if (negocio.horario == null) return false;
     final horario = negocio.horario!.toLowerCase();
     if (horario.contains('24 horas')) return true;
-    final hora = DateTime.now().hour;
-    return hora >= 8 && hora < 22;
+    final match = RegExp(r'(\d{1,2})\s*[:\-]\s*(\d{2})\s*(?:am|pm)?').firstMatch(horario);
+    if (match == null) return false;
+    final ahora = DateTime.now();
+    final minActual = ahora.hour * 60 + ahora.minute;
+    final horaApertura = int.tryParse(match.group(1) ?? '') ?? 8;
+    final minApertura = int.tryParse(match.group(2) ?? '00') ?? 0;
+    if (horario.contains(RegExp(r'(cierra|close|hasta)\s*'))) {
+      final cierreMatch = RegExp(r'(?:cierra|close|hasta)\s*(\d{1,2})\s*[:\-]\s*(\d{2})').firstMatch(horario);
+      if (cierreMatch != null) {
+        final horaCierre = int.tryParse(cierreMatch.group(1) ?? '') ?? 22;
+        final minCierre = int.tryParse(cierreMatch.group(2) ?? '00') ?? 0;
+        final minCierreTotal = horaCierre * 60 + minCierre;
+        return minActual >= horaApertura * 60 + minApertura && minActual < minCierreTotal;
+      }
+    }
+    return true;
   }
 }

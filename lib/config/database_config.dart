@@ -3,5 +3,5 @@ class DatabaseConfig {
   static const int port = 5432;
   static const String database = 'closi_db';
   static const String username = 'postgres';
-  static const String password = '123';
+  static const String password = 'jchd';
 }

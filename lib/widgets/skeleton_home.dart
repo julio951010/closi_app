@@ -49,29 +49,6 @@ class _SkeletonHomeState extends State<SkeletonHome> with SingleTickerProviderSt
       child: SingleChildScrollView(
         child: Column(
           children: [
-          // Header skeleton
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            color: theme.colorScheme.surface,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    _box(36, 36, skeletonColor),
-                    const Spacer(),
-                    _box(100, 36, skeletonColor),
-                    const Spacer(),
-                    _box(36, 36, skeletonColor),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                _box(180, 20, skeletonColor),
-                const SizedBox(height: 8),
-                _box(250, 16, skeletonColor),
-              ],
-            ),
-          ),
           const SizedBox(height: 16),
           // Category chips
           SizedBox(

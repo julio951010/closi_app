@@ -92,7 +92,7 @@ class _CategoriaChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorReal = Color(int.parse(color.replaceFirst('#', '0xFF')));
+    final colorReal = Color(int.tryParse(color.replaceFirst('#', '0xFF')) ?? 0xFF1565C0);
     final theme = Theme.of(context);
     final esOscuro = theme.brightness == Brightness.dark;
 

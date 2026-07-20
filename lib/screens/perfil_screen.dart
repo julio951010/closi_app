@@ -6,7 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:postgres/postgres.dart';
-import '../config/database_config.dart';
+import '../database/pg_connection.dart';
 import '../models/perfil.dart';
 import '../repositories/usuario_repository.dart';
 import '../services/permisos_service.dart';
@@ -72,13 +72,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
 
   Future<void> _cargarPerfil() async {
     try {
-      final conn = await Connection.open(Endpoint(
-        host: DatabaseConfig.host,
-        port: DatabaseConfig.port,
-        database: DatabaseConfig.database,
-        username: DatabaseConfig.username,
-        password: DatabaseConfig.password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+      final conn = await abrirConexionPostgres();
       final filas = await conn.execute(Sql.named(
         'SELECT id, nombre, email, telefono, foto_url, rol, creado_en FROM usuarios WHERE id = @id',
       ), parameters: {'id': SesionService.usuarioId});
@@ -131,13 +125,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
     var pgOk = false;
 
     try {
-      final conn = await Connection.open(Endpoint(
-        host: DatabaseConfig.host,
-        port: DatabaseConfig.port,
-        database: DatabaseConfig.database,
-        username: DatabaseConfig.username,
-        password: DatabaseConfig.password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+      final conn = await abrirConexionPostgres();
       await conn.execute(Sql.named(
         'UPDATE usuarios SET nombre = @nombre, email = @email, telefono = @telefono, foto_url = @foto_url WHERE id = @id',
       ), parameters: {
@@ -242,13 +230,7 @@ class _PerfilScreenState extends State<PerfilScreen> {
                   if (!formKey.currentState!.validate()) return;
                   setDialogState(() => guardando = true);
                   try {
-                    final conn = await Connection.open(Endpoint(
-                      host: DatabaseConfig.host,
-                      port: DatabaseConfig.port,
-                      database: DatabaseConfig.database,
-                      username: DatabaseConfig.username,
-                      password: DatabaseConfig.password,
-                    ));
+                    final conn = await abrirConexionPostgres();
                     final filas = await conn.execute(Sql.named(
                       'SELECT password_hash FROM usuarios WHERE id = @id',
                     ), parameters: {'id': _perfil!.id});

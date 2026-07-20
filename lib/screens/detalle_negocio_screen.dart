@@ -6,7 +6,7 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:url_launcher/url_launcher.dart' as url_launcher;
 import 'package:uuid/uuid.dart';
 import 'package:postgres/postgres.dart';
-import '../config/database_config.dart';
+import '../database/pg_connection.dart';
 import '../database/favorito_dao.dart';
 import '../database/negocio_dao.dart';
 import '../database/opinion_dao.dart';
@@ -119,19 +119,13 @@ class _DetalleNegocioScreenState extends State<DetalleNegocioScreen> {
     );
     if (result == null || result <= 0) return;
     try {
-      final conn = await Connection.open(Endpoint(
-        host: DatabaseConfig.host,
-        port: DatabaseConfig.port,
-        database: DatabaseConfig.database,
-        username: DatabaseConfig.username,
-        password: DatabaseConfig.password,
-      ), settings: const ConnectionSettings(sslMode: SslMode.disable));
+      final conn = await abrirConexionPostgres();
       try {
         await conn.execute(
           Sql.named('''
-            INSERT INTO resenas (id, usuario_id, negocio_id, calificacion)
-            VALUES (@id, @usuarioId, @negocioId, @calificacion)
-            ON CONFLICT (usuario_id, negocio_id) DO UPDATE SET calificacion = @calificacion
+            INSERT INTO calificaciones (id, usuario_id, negocio_id, calificacion, creado_en)
+            VALUES (@id, @usuarioId, @negocioId, @calificacion, NOW())
+            ON CONFLICT (usuario_id, negocio_id) DO UPDATE SET calificacion = @calificacion, creado_en = NOW()
           '''),
           parameters: {
             'id': const Uuid().v4(),
@@ -170,13 +164,7 @@ class _DetalleNegocioScreenState extends State<DetalleNegocioScreen> {
       builder: (_) => _OpinionModal(negocioId: _negocio.id, existente: existente),
     );
     if (result == null) return;
-    final conn = await Connection.open(Endpoint(
-      host: DatabaseConfig.host,
-      port: DatabaseConfig.port,
-      database: DatabaseConfig.database,
-      username: DatabaseConfig.username,
-      password: DatabaseConfig.password,
-    ));
+    final conn = await abrirConexionPostgres();
     try {
       await conn.execute(
         Sql.named('''

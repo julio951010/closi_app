@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/negocio.dart';
 import '../services/negocio_service.dart';
+import '../services/radio_busqueda_service.dart';
 import 'detalle_negocio_screen.dart';
 
 class BuscarScreen extends StatefulWidget {
@@ -20,7 +21,7 @@ class _BuscarScreenState extends State<BuscarScreen> {
   bool _cargando = false;
 
   String? _categoriaFiltro;
-  double _radioKm = 15;
+  double _radioKm = RadioBusquedaService.radioKm.value;
   double? _calificacionMinima;
   String? _metodoPago;
 

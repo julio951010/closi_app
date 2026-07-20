@@ -15,17 +15,14 @@ class Negocio {
   final String? metodoPago;
   final double lat;
   final double lon;
-  final double? distancia;
+  double? distancia;
   final List<String> fotos;
   final bool esFavorito;
   final double? calificacion;
   final int? totalResenas;
   final bool esDestacado;
-
-  /// 'propio' = administrado por el usuario (tabla negocios_propios, editable).
-  /// 'cache'  = descargado para consulta offline (tabla negocios_cache, solo lectura).
   final String origen;
-  final String estado; // pendiente | aprobado | rechazado (solo aplica a 'propio')
+  final String estado;
   final String? thumbnailLocal;
   final DateTime? ultimoAcceso;
 
@@ -42,8 +39,8 @@ class Negocio {
     this.horario,
     this.descripcion,
     this.metodoPago,
-    required this.lat,
-    required this.lon,
+    this.lat = 23.113592,
+    this.lon = -82.366592,
     this.distancia,
     this.fotos = const [],
     this.esFavorito = false,
@@ -59,9 +56,9 @@ class Negocio {
   /// Desde la tabla local `negocios_propios`
   factory Negocio.fromMapPropio(Map<String, dynamic> map) {
     return Negocio(
-      id: map['id'] as String,
-      nombre: map['nombre'] as String,
-      categoria: map['categoria_id'] as String,
+      id: (map['id'] as String?) ?? '',
+      nombre: (map['nombre'] as String?) ?? '',
+      categoria: (map['categoria_id'] as String?) ?? '',
       direccion: map['direccion'] as String?,
       telefono: map['telefono'] as String?,
       whatsapp: map['whatsapp'] as String?,
@@ -71,19 +68,19 @@ class Negocio {
       horario: map['horario'] as String?,
       descripcion: map['descripcion'] as String?,
       metodoPago: map['metodo_pago'] as String?,
-      lat: map['lat'] as double,
-      lon: map['lon'] as double,
+      lat: (map['lat'] as num?)?.toDouble() ?? 23.113592,
+      lon: (map['lon'] as num?)?.toDouble() ?? -82.366592,
       origen: 'propio',
-      estado: map['estado'] as String? ?? 'pendiente',
+      estado: (map['estado'] as String?) ?? 'pendiente',
     );
   }
 
   /// Desde la tabla local `negocios_cache`
   factory Negocio.fromMapCache(Map<String, dynamic> map) {
     return Negocio(
-      id: map['id'] as String,
-      nombre: map['nombre'] as String,
-      categoria: map['categoria_id'] as String? ?? '',
+      id: (map['id'] as String?) ?? '',
+      nombre: (map['nombre'] as String?) ?? '',
+      categoria: (map['categoria_id'] as String?) ?? '',
       descripcion: map['descripcion'] as String?,
       direccion: map['direccion'] as String?,
       telefono: map['telefono'] as String?,
@@ -92,10 +89,10 @@ class Negocio {
       sitioWeb: map['sitio_web'] as String?,
       redesSociales: map['redes_sociales'] as String?,
       horario: map['horario'] as String?,
-      lat: map['lat'] as double,
-      lon: map['lon'] as double,
-      calificacion: map['calificacion_promedio'] as double?,
-      totalResenas: map['total_resenas'] as int?,
+      lat: (map['lat'] as num?)?.toDouble() ?? 23.113592,
+      lon: (map['lon'] as num?)?.toDouble() ?? -82.366592,
+      calificacion: (map['calificacion_promedio'] as num?)?.toDouble(),
+      totalResenas: (map['total_resenas'] as num?)?.toInt(),
       esDestacado: (map['es_destacado'] as int? ?? 0) == 1,
       origen: 'cache',
       thumbnailLocal: map['thumbnail_local'] as String?,
@@ -148,19 +145,28 @@ class Negocio {
     };
   }
 
-  Negocio copyWith({bool? esFavorito, DateTime? ultimoAcceso, double? calificacion, int? totalResenas}) {
+  Negocio copyWith({
+    bool? esFavorito,
+    DateTime? ultimoAcceso,
+    double? calificacion,
+    int? totalResenas,
+    String? direccion,
+    String? telefono,
+    String? horario,
+    String? descripcion,
+  }) {
     return Negocio(
       id: id,
       nombre: nombre,
       categoria: categoria,
-      direccion: direccion,
-      telefono: telefono,
+      direccion: direccion ?? this.direccion,
+      telefono: telefono ?? this.telefono,
       whatsapp: whatsapp,
       email: email,
       sitioWeb: sitioWeb,
       redesSociales: redesSociales,
-      horario: horario,
-      descripcion: descripcion,
+      horario: horario ?? this.horario,
+      descripcion: descripcion ?? this.descripcion,
       metodoPago: metodoPago,
       lat: lat,
       lon: lon,
@@ -176,6 +182,8 @@ class Negocio {
       ultimoAcceso: ultimoAcceso ?? this.ultimoAcceso,
     );
   }
+
+  // ---- Categorías y utilidades ----
 
   static List<String> categorias = [
     'restaurante', 'cafeteria', 'farmacia', 'tienda',
@@ -220,5 +228,4 @@ class Negocio {
   static String getNombreCategoria(String categoria) {
     return nombresCategoria[categoria] ?? categoria;
   }
-
 }

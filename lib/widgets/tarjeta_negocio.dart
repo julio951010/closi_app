@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../models/negocio.dart';
 import '../screens/detalle_negocio_screen.dart';
@@ -104,6 +105,8 @@ class TarjetaNegocio extends StatelessWidget {
 
     // Si tiene fotos, mostrar la primera
     if (negocio.fotos.isNotEmpty) {
+      final fotoUrl = negocio.fotos.first;
+      final esLocal = !fotoUrl.startsWith('http') && File(fotoUrl).existsSync();
       return Container(
         width: 60,
         height: 60,
@@ -113,7 +116,11 @@ class TarjetaNegocio extends StatelessWidget {
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(10),
-          child: _imagenPlaceholder(color, 30),
+          child: esLocal
+              ? Image.file(File(fotoUrl), fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _imagenPlaceholder(color, 30))
+              : Image.network(fotoUrl, fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => _imagenPlaceholder(color, 30)),
         ),
       );
     }

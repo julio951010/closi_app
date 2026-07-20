@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../models/negocio.dart';
+import '../services/tema_mapa_service.dart';
 
 class Coordenada {
   final double latitude;
@@ -40,8 +41,24 @@ class MapaOffline extends StatefulWidget {
 class _MapaOfflineState extends State<MapaOffline> {
   MethodChannel? _channel;
 
+  @override
+  void initState() {
+    super.initState();
+    TemaMapaService.actual.addListener(_onTemaMapaChanged);
+  }
+
+  @override
+  void dispose() {
+    TemaMapaService.actual.removeListener(_onTemaMapaChanged);
+    super.dispose();
+  }
+
+  void _onTemaMapaChanged() {
+    _channel?.invokeMethod('setTheme', {'theme': TemaMapaService.actual.value});
+  }
+
   Future<void> _sendMarkers() async {
-    if (_channel == null) return;
+    if (_channel == null || widget.negocios.isEmpty) return;
     final markers = <Map<String, dynamic>>[];
     for (final n in widget.negocios) {
       Uint8List? imgBytes;
@@ -107,6 +124,7 @@ class _MapaOfflineState extends State<MapaOffline> {
         'lon': widget.centro.longitude,
         'zoom': widget.zoom,
         'readOnly': widget.readOnly,
+        'theme': TemaMapaService.actual.value,
       },
       creationParamsCodec: const StandardMessageCodec(),
     );

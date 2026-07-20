@@ -2,6 +2,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/tema_service.dart';
+import '../services/tema_mapa_service.dart';
+import '../services/radio_busqueda_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/negocio_service.dart';
 import '../services/sesion_service.dart';
@@ -48,6 +50,8 @@ class _LoadingScreenState extends State<LoadingScreen> with SingleTickerProvider
 
     await SesionService.inicializar();
     await TemaService.inicializar();
+    await TemaMapaService.inicializar();
+    await RadioBusquedaService.inicializar();
 
     // Verificar conexión a PostgreSQL
     final pgOk = await NegocioService.verificarConexion();

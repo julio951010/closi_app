@@ -2,39 +2,30 @@ package com.jchd.closi_app
 
 import android.animation.ValueAnimator
 import android.content.Context
-import android.graphics.Bitmap
+import android.view.View
 import android.graphics.BitmapFactory
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
-import android.graphics.RectF
-import android.view.MotionEvent
-import android.view.View
-import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.FrameLayout
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.platform.PlatformView
-import kotlin.math.PI
-import kotlin.math.atan
-import kotlin.math.cos
-import kotlin.math.exp
-import kotlin.math.ln
-import kotlin.math.pow
-import kotlin.math.tan
-import org.mapsforge.core.model.LatLong
-import org.mapsforge.map.android.graphics.AndroidGraphicFactory
-import org.mapsforge.map.android.util.AndroidUtil
-import org.mapsforge.map.android.view.MapView
-import org.mapsforge.map.layer.renderer.TileRendererLayer
-import org.mapsforge.map.model.common.Observer
-import org.mapsforge.map.reader.MapFile
-import org.mapsforge.map.rendertheme.StreamRenderTheme
+import org.oscim.android.MapView
+import org.oscim.android.canvas.AndroidBitmap
+import org.oscim.core.GeoPoint
+import org.oscim.core.MapPosition
+import org.oscim.layers.marker.ItemizedLayer
+import org.oscim.layers.marker.MarkerInterface
+import org.oscim.layers.marker.MarkerItem
+import org.oscim.layers.marker.MarkerSymbol
+import org.oscim.layers.tile.buildings.BuildingLayer
+import org.oscim.layers.tile.vector.labeling.LabelLayer
+import org.oscim.theme.StreamRenderTheme
+import org.oscim.tiling.source.mapfile.MapFileTileSource
 import java.io.File
+import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.io.InputStream
 
 class VtmMapView(
     private val context: Context,
@@ -45,238 +36,547 @@ class VtmMapView(
 
     private val rootView: FrameLayout
     private val mapView: MapView
-    private val pinView: PinView
     private val methodChannel: MethodChannel
-    private var tileRendererLayer: TileRendererLayer? = null
-    private var myLatLong: LatLong? = null
+    private var readOnly = false
+    private val markerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
+    // Marker layers for rendering (VTM GL layers)
+    private val businessLayer: ItemizedLayer
+    private val selectedLayer: ItemizedLayer
+    private val defaultSymbol: MarkerSymbol
+
+    // Hit-testing list (independent of VTM layer state)
     private data class BusinessMarker(
-        val lat: Double, val lon: Double,
-        val nombre: String, val id: String,
-        val categoria: String,
-        val bitmap: Bitmap?
+        val id: String, val nombre: String,
+        val lat: Double, val lon: Double
     )
     private val businessMarkers = mutableListOf<BusinessMarker>()
+
+    // Location marker rendered as MarkerItem (always on top)
+    private val myLocationLayer: ItemizedLayer
+    private var myLocationItem: MarkerItem? = null
+    private var locationEnabled = false
+    private var locationLat = 0.0
+    private var locationLon = 0.0
+    private var pulseAnimator: ValueAnimator? = null
+    private var pulseProgress = 0f
+
+    // Tile layer (needed for LabelLayer & BuildingLayer)
+    private var tileLayer: org.oscim.layers.tile.vector.VectorTileLayer? = null
+
+    // Selection pin (single marker)
+    private var pinItem: MarkerItem? = null
+    private var pinSymbol: MarkerSymbol? = null
+
+    // Selected business ID
     private var selectedBusinessId: String? = null
-    private var readOnly = false
+    private var touchDownX = 0f
+    private var touchDownY = 0f
+
+    // Market colors by ID hash
+    private fun markerColorFor(id: String): Int {
+        val hue = (id.hashCode() and 0x7FFFFFFF) % 360
+        val hsv = floatArrayOf(hue.toFloat(), 0.55f, 0.85f)
+        return Color.HSVToColor(hsv)
+    }
+
+    private fun createCircleBitmap(sizeDp: Int, color: Int, selected: Boolean = false): android.graphics.Bitmap {
+        val density = context.resources.displayMetrics.density
+        val size = (sizeDp * density).toInt()
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bmp)
+        val cx = size / 2f
+        val cy = size / 2f
+        val r = cx - 2f * density
+
+        if (selected) {
+            markerPaint.color = Color.argb(80, 33, 150, 243)
+            canvas.drawCircle(cx, cy, r + 10f * density, markerPaint)
+            markerPaint.color = Color.argb(140, 33, 150, 243)
+            canvas.drawCircle(cx, cy, r + 5f * density, markerPaint)
+            markerPaint.style = Paint.Style.STROKE
+            markerPaint.strokeWidth = 3f * density
+            markerPaint.color = Color.argb(200, 33, 150, 243)
+            canvas.drawCircle(cx, cy, r, markerPaint)
+            markerPaint.style = Paint.Style.FILL
+        }
+
+        markerPaint.color = Color.argb(40, 0, 0, 0)
+        canvas.drawCircle(cx, cy + 2f * density, r * 0.85f, markerPaint)
+
+        markerPaint.color = Color.WHITE
+        canvas.drawCircle(cx, cy, r, markerPaint)
+
+        markerPaint.color = color
+        canvas.drawCircle(cx, cy, r - 2f * density, markerPaint)
+
+        return bmp
+    }
+
+    private fun createDefaultSymbol(): MarkerSymbol {
+        val bmp = createCircleBitmap(36, Color.parseColor("#1245A8"))
+        return MarkerSymbol(AndroidBitmap(bmp), MarkerSymbol.HotspotPlace.CENTER)
+    }
 
     init {
-        try {
-            AndroidGraphicFactory.createInstance(
-                context.applicationContext as android.app.Application
-            )
-        } catch (_: Exception) { }
-
         mapView = MapView(context)
-        mapView.isClickable = true
-        mapView.mapScaleBar.isVisible = false
-        mapView.setBuiltInZoomControls(true)
-
-        pinView = PinView(context)
-
         rootView = FrameLayout(context)
         rootView.addView(mapView, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         ))
-        rootView.addView(pinView, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT,
-            FrameLayout.LayoutParams.MATCH_PARENT
-        ))
-
-        mapView.model.mapViewPosition.addObserver(Observer { pinView.invalidate() })
-
-        mapView.setOnTouchListener { _, event ->
-            when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    pinView.touchStartX = event.x
-                    pinView.touchStartY = event.y
-                    pinView.isDragging = false
-                    false
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    val dx = event.x - pinView.touchStartX
-                    val dy = event.y - pinView.touchStartY
-                    if (dx * dx + dy * dy > 15f * 15f) {
-                        pinView.isDragging = true
-                    }
-                    false
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (!pinView.isDragging) {
-                        try {
-                            processTap(event.x, event.y)
-                        } catch (_: Exception) { }
-                    }
-                    false
-                }
-                else -> false
-            }
-        }
 
         methodChannel = MethodChannel(messenger, "closi_app/vtm_map_$id")
         methodChannel.setMethodCallHandler(this)
 
         val initLat = (creationParams?.get("lat") as? Double) ?: 23.113592
         val initLon = (creationParams?.get("lon") as? Double) ?: -82.366592
-        val initZoom = (creationParams?.get("zoom") as? Int)?.toByte() ?: 13
+        val initZoom = (creationParams?.get("zoom") as? Int) ?: 13
         readOnly = (creationParams?.get("readOnly") as? Boolean) ?: false
+        val initTheme = (creationParams?.get("theme") as? String) ?: "default"
 
-        cargarMapa(initLat, initLon, initZoom)
+        cargarMapa(initLat, initLon, initZoom, initTheme)
+
+        defaultSymbol = createDefaultSymbol()
+
+        businessLayer = ItemizedLayer(mapView.map(), mutableListOf(), defaultSymbol, null)
+        mapView.map().layers().add(businessLayer)
+        selectedLayer = ItemizedLayer(mapView.map(), mutableListOf(), defaultSymbol, null)
+        mapView.map().layers().add(selectedLayer)
+
+        myLocationLayer = ItemizedLayer(mapView.map(), mutableListOf(), defaultSymbol, null)
+        mapView.map().layers().add(myLocationLayer)
+
+        mapView.setOnTouchListener { _, event ->
+            if (readOnly) return@setOnTouchListener false
+            when (event.action) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    touchDownX = event.x
+                    touchDownY = event.y
+                }
+                android.view.MotionEvent.ACTION_UP -> {
+                    val dx = event.x - touchDownX
+                    val dy = event.y - touchDownY
+                    val dist = Math.sqrt((dx * dx + dy * dy).toDouble())
+                    if (dist < 20f * context.resources.displayMetrics.density) {
+                        processTap(event.x, event.y)
+                    }
+                }
+            }
+            false
+        }
     }
 
     override fun getView(): View = rootView
-
-    private fun processTap(x: Float, y: Float) {
-        val viewW = mapView.width.toDouble()
-        val viewH = mapView.height.toDouble()
-        if (viewW <= 0.0 || viewH <= 0.0) return
-        val center = mapView.model.mapViewPosition.center
-        val zoom = mapView.model.mapViewPosition.zoomLevel.toInt()
-        val tileSize = mapView.model.displayModel.tileSize
-        val mapSize = tileSize.toDouble() * 2.0.pow(zoom)
-        val centerLatRad = center.latitude * PI / 180.0
-        val centerWPX = (center.longitude + 180.0) / 360.0 * mapSize
-        val centerWPY = (1.0 - ln(tan(centerLatRad) + 1.0 / cos(centerLatRad)) / PI) / 2.0 * mapSize
-
-        // Check if tap hit a marker
-        val hitR = 50f * context.resources.displayMetrics.density
-        for (bm in businessMarkers) {
-            val bmLatRad = bm.lat * PI / 180.0
-            val bmWPX = (bm.lon + 180.0) / 360.0 * mapSize
-            val bmWPY = (1.0 - ln(tan(bmLatRad) + 1.0 / cos(bmLatRad)) / PI) / 2.0 * mapSize
-            val bx = (mapView.width / 2.0 + (bmWPX - centerWPX)).toFloat()
-            val by = (mapView.height / 2.0 + (bmWPY - centerWPY)).toFloat()
-            if (Math.abs(x - bx) <= hitR && Math.abs(y - by) <= hitR) {
-                methodChannel.invokeMethod("onMarkerTapped", mapOf("id" to bm.id))
-                return
-            }
-        }
-
-        val dx = x.toDouble() - viewW / 2.0
-        val dy = y.toDouble() - viewH / 2.0
-        val touchWPX = centerWPX + dx
-        val touchWPY = centerWPY + dy
-        val touchLon = touchWPX / mapSize * 360.0 - 180.0
-        val mercN = PI * (1.0 - 2.0 * touchWPY / mapSize)
-        val touchLatRad = atan((exp(mercN) - exp(-mercN)) / 2.0)
-        val touchLat = touchLatRad * 180.0 / PI
-        val latLong = LatLong(touchLat, touchLon)
-        mapView.setCenter(latLong)
-        methodChannel.invokeMethod(
-            "onMapClicked",
-            mapOf<String, Any?>("lat" to touchLat, "lon" to touchLon)
-        )
-    }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "setCenter" -> {
                 val lat = call.argument<Double>("lat") ?: return
                 val lon = call.argument<Double>("lon") ?: return
-                mapView.setCenter(LatLong(lat, lon))
+                val pos = MapPosition()
+                mapView.map().getMapPosition(pos)
+                mapView.map().setMapPosition(lat, lon, pos.scale)
                 result.success(null)
             }
             "setZoom" -> {
                 val zoom = call.argument<Int>("zoom") ?: return
-                mapView.setZoomLevel(zoom.toByte())
+                val pos = MapPosition()
+                mapView.map().getMapPosition(pos)
+                mapView.map().setMapPosition(
+                    pos.geoPoint?.latitude ?: 0.0,
+                    pos.geoPoint?.longitude ?: 0.0,
+                    (1 shl zoom).toDouble()
+                )
                 result.success(null)
             }
             "getCenter" -> {
-                val center = mapView.model.mapViewPosition.center
-                result.success(mapOf("lat" to center.latitude, "lon" to center.longitude))
+                val pos = MapPosition()
+                mapView.map().getMapPosition(pos)
+                result.success(mapOf(
+                    "lat" to (pos.geoPoint?.latitude ?: 0.0),
+                    "lon" to (pos.geoPoint?.longitude ?: 0.0)
+                ))
             }
             "placePin" -> {
                 val lat = call.argument<Double>("lat") ?: return
                 val lon = call.argument<Double>("lon") ?: return
                 val imageBytes = call.argument<ByteArray>("imageBytes")
                 val selected = call.argument<Boolean>("isSelected") ?: false
-                pinView.pinLatLong = LatLong(lat, lon)
-                pinView.pinSelected = selected
-                pinView.pinBitmap = if (imageBytes != null) {
-                    BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size)
-                } else null
-                pinView.invalidate()
+                placePin(lat, lon, imageBytes, selected)
                 result.success(null)
             }
             "clearPin" -> {
-                pinView.pinLatLong = null
-                pinView.pinBitmap = null
-                pinView.pinSelected = false
-                pinView.invalidate()
+                clearPin()
                 result.success(null)
             }
             "selectBusiness" -> {
                 val id = call.argument<String>("id")
-                selectedBusinessId = id
-                if (id != null) pinView.startGlow() else pinView.stopGlow()
-                pinView.invalidate()
+                selectBusiness(id)
                 result.success(null)
             }
             "setMyLocation" -> {
                 val lat = call.argument<Double>("lat") ?: return
                 val lon = call.argument<Double>("lon") ?: return
-                myLatLong = LatLong(lat, lon)
-                pinView.invalidate()
+                myLatLong = GeoPoint(lat, lon)
+                updateMyLocation(lat, lon)
                 result.success(null)
             }
             "clearMyLocation" -> {
                 myLatLong = null
-                pinView.invalidate()
+                pulseAnimator?.cancel()
+                pulseAnimator = null
+                myLocationItem?.let { myLocationLayer.removeItem(it) }
+                myLocationItem = null
+                locationEnabled = false
+                myLocationLayer.update()
+                mapView.map().updateMap(true)
+                result.success(null)
+            }
+            "setTheme" -> {
+                val tema = call.argument<String>("theme") ?: return
+                aplicarTema(tema)
                 result.success(null)
             }
             "setMarkers" -> {
                 val lista = call.argument<List<Map<String, Any?>>>("markers")
-                businessMarkers.clear()
-                if (lista != null) {
-                    for (m in lista) {
-                        val lat = m["lat"] as? Double ?: continue
-                        val lon = m["lon"] as? Double ?: continue
-                        val nombre = m["nombre"] as? String ?: ""
-                        val id = m["id"] as? String ?: ""
-                        val categoria = m["categoria"] as? String ?: ""
-                        val imageBytes = m["imageBytes"] as? ByteArray
-                        val bmp = if (imageBytes != null) {
-                            val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
-                            BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, opts)
-                        } else null
-                        businessMarkers.add(BusinessMarker(lat, lon, nombre, id, categoria, bmp))
-                    }
-                }
-                pinView.invalidate()
+                setMarkers(lista)
                 result.success(null)
             }
             else -> result.notImplemented()
         }
     }
 
-    private fun cargarMapa(lat: Double, lon: Double, zoom: Byte) {
+    private var myLatLong: GeoPoint? = null
+
+    private fun createMyLocationBitmap(density: Float, bearing: Float, pulse: Float = 0f): android.graphics.Bitmap {
+        val size = (32f * density).toInt()
+        val cx = size / 2f
+        val cy = size / 2f
+        val r = cx - 2f * density
+        val bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        // Outer pulsing ring
+        val pulseR = r + (r * 0.4f * pulse)
+        val pulseAlpha = (25 * (1f - pulse * 0.8f)).toInt().coerceIn(5, 25)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.argb(pulseAlpha, 33, 150, 243)
+        c.drawCircle(cx, cy, pulseR, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = 2f * density
+        paint.color = Color.argb((80 * (1f - pulse * 0.7f)).toInt().coerceIn(10, 80), 33, 150, 243)
+        c.drawCircle(cx, cy, r, paint)
+
+        // White inner circle
+        paint.style = Paint.Style.FILL
+        paint.color = Color.WHITE
+        c.drawCircle(cx, cy, r * 0.5f, paint)
+
+        // Blue dot center
+        paint.color = Color.parseColor("#1245A8")
+        c.drawCircle(cx, cy, r * 0.35f, paint)
+
+        // Direction arrow if bearing is valid
+        if (bearing > 0f) {
+            val arrowR = r * 0.65f
+            paint.style = Paint.Style.FILL
+            paint.color = Color.parseColor("#1245A8")
+            c.save()
+            c.rotate(bearing, cx, cy)
+            val path = android.graphics.Path()
+            path.moveTo(cx, cy - arrowR)
+            path.lineTo(cx - 6f * density, cy - arrowR * 0.4f)
+            path.lineTo(cx + 6f * density, cy - arrowR * 0.4f)
+            path.close()
+            c.drawPath(path, paint)
+            c.restore()
+        }
+        return bmp
+    }
+
+    private fun updateMyLocation(lat: Double, lon: Double) {
+        locationLat = lat
+        locationLon = lon
+        pulseAnimator?.cancel()
+        pulseProgress = 0f
+        redrawMyLocation()
+        pulseAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 1800
+            repeatMode = ValueAnimator.REVERSE
+            repeatCount = ValueAnimator.INFINITE
+            addUpdateListener { anim ->
+                pulseProgress = anim.animatedValue as Float
+                redrawMyLocation()
+            }
+            start()
+        }
+    }
+
+    private fun redrawMyLocation() {
+        val density = context.resources.displayMetrics.density
+        val bmp = createMyLocationBitmap(density, 0f, pulseProgress)
+        val sym = MarkerSymbol(AndroidBitmap(bmp), MarkerSymbol.HotspotPlace.CENTER)
+        myLocationItem?.let { myLocationLayer.removeItem(it) }
+        val item = MarkerItem("__location__", "", "", GeoPoint(locationLat, locationLon))
+        item.setMarker(sym)
+        myLocationLayer.addItem(item)
+        myLocationItem = item
+        locationEnabled = true
+        myLocationLayer.update()
+        mapView.map().updateMap(true)
+    }
+
+    private fun processTap(x: Float, y: Float) {
+        if (mapView.width <= 0 || mapView.height <= 0) return
+        val hitR = 18f * context.resources.displayMetrics.density
+        val point = org.oscim.core.Point()
+        for (bm in businessMarkers) {
+            mapView.map().viewport().toScreenPoint(GeoPoint(bm.lat, bm.lon), false, point)
+            if (Math.abs(x - point.x.toFloat()) <= hitR && Math.abs(y - point.y.toFloat()) <= hitR) {
+                methodChannel.invokeMethod("onMarkerTapped", mapOf("id" to bm.id))
+                return
+            }
+        }
+        val gp = mapView.map().viewport().fromScreenPoint(x, y) ?: return
+        methodChannel.invokeMethod("onMapClicked", mapOf("lat" to gp.latitude, "lon" to gp.longitude))
+    }
+
+    private fun placePin(lat: Double, lon: Double, imageBytes: ByteArray?, selected: Boolean) {
+        val density = context.resources.displayMetrics.density
+        val bmp = if (imageBytes != null) {
+            val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
+            val src = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, opts)
+            createPinBitmap(src, selected, density)
+        } else {
+            createPinBitmap(null, selected, density)
+        }
+        pinSymbol = MarkerSymbol(AndroidBitmap(bmp), MarkerSymbol.HotspotPlace.BOTTOM_CENTER)
+
+        pinItem?.let { selectedLayer.removeItem(it) }
+        pinItem = null
+
+        val item = MarkerItem("pin", "", "", GeoPoint(lat, lon))
+        item.setMarker(pinSymbol)
+        selectedLayer.addItem(item)
+        pinItem = item
+        selectedLayer.update()
+        mapView.map().updateMap(true)
+    }
+
+    private fun createPinBitmap(photo: android.graphics.Bitmap?, selected: Boolean, density: Float): android.graphics.Bitmap {
+        val sel = if (selected) 1.12f else 1f
+        val pinW = (36f * density * sel).toInt()
+        val shadowPad = (8f * density).toInt()
+
+        val src = run {
+            val stream = context.assets.open("flutter_assets/assets/images/red-marker.png")
+            try {
+                val s = BitmapFactory.decodeStream(stream)
+                s ?: android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+            } catch (e: Exception) {
+                android.graphics.Bitmap.createBitmap(1, 1, android.graphics.Bitmap.Config.ARGB_8888)
+            } finally {
+                stream.close()
+            }
+        }
+        val aspect = src.height.toFloat() / src.width.toFloat()
+        val pw = pinW
+        val ph = (pw * aspect).toInt()
+        val pin = android.graphics.Bitmap.createScaledBitmap(src, pw, ph, true)
+
+        val w = pw + shadowPad * 2
+        val h = ph + shadowPad
+        val bmp = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+        val c = android.graphics.Canvas(bmp)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+        // Shadow below pin
+        paint.style = Paint.Style.FILL
+        paint.color = Color.argb(50, 0, 0, 0)
+        val sw = pw * 0.5f
+        val sh = 6f * density
+        c.drawOval(android.graphics.RectF((w - sw) / 2f, h - sh - 2f, (w + sw) / 2f, h - 2f), paint)
+
+        // Draw pin
+        c.drawBitmap(pin, shadowPad.toFloat(), (shadowPad * 0.3f).toFloat(), null)
+
+        // Selected glow
+        if (selected) {
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 3f * density
+            paint.color = Color.argb(180, 33, 150, 243)
+            c.drawRect(shadowPad - 2f - paint.strokeWidth, (shadowPad * 0.3f) - 2f - paint.strokeWidth,
+                (shadowPad + pw).toFloat() + 2f + paint.strokeWidth,
+                (shadowPad * 0.3f + ph).toFloat() + 2f + paint.strokeWidth, paint)
+        }
+
+        // Photo overlay in upper area
+        if (photo != null) {
+            val photoPad = (4f * density).toFloat()
+            val maxPhotoW = pw - photoPad * 2
+            val maxPhotoH = ph * 0.45f
+            val photoR = kotlin.math.min(maxPhotoW, maxPhotoH) / 2f
+            val photoCx = w / 2f
+            val photoCy = (shadowPad * 0.3f + ph * 0.28f).toFloat()
+
+            val clipPath = android.graphics.Path().apply {
+                addCircle(photoCx, photoCy, photoR, android.graphics.Path.Direction.CW)
+            }
+            c.save()
+            c.clipPath(clipPath)
+            paint.style = Paint.Style.FILL
+            paint.color = Color.WHITE
+            c.drawCircle(photoCx, photoCy, photoR, paint)
+            c.drawBitmap(photo, null,
+                android.graphics.RectF(photoCx - photoR, photoCy - photoR, photoCx + photoR, photoCy + photoR), null)
+            c.restore()
+            paint.style = Paint.Style.STROKE
+            paint.color = Color.WHITE
+            paint.strokeWidth = 1.5f * density
+            c.drawCircle(photoCx, photoCy, photoR, paint)
+        }
+
+        return bmp
+    }
+
+    private fun clearPin() {
+        pinItem?.let { selectedLayer.removeItem(it) }
+        pinItem = null
+        pinSymbol = null
+        selectedLayer.update()
+    }
+
+    private fun selectBusiness(id: String?) {
+        android.util.Log.d("VtmMap", "selectBusiness id=$id items=${businessLayer.itemList.size}")
+        selectedBusinessId = id
+        updateSelectedMarker()
+    }
+
+    private fun updateSelectedMarker() {
+        android.util.Log.d("VtmMap", "updateSelectedMarker sel=$selectedBusinessId items=${businessLayer.itemList.size}")
+        val copy = ArrayList(businessLayer.itemList)
+        val changed = copy.isNotEmpty()
+        var selectedItem: MarkerItem? = null
+
+        // Move previously selected item back to businessLayer
+        val prevSelected = mutableListOf<MarkerInterface>()
+        for (item in selectedLayer.itemList) prevSelected.add(item)
+        for (item in prevSelected) {
+            selectedLayer.removeItem(item)
+            if (item is MarkerItem) {
+                val uidStr = item.uid?.toString()
+                if (!uidStr.isNullOrEmpty() && uidStr != "pin") {
+                    businessLayer.addItem(item)
+                }
+            }
+        }
+
+        for (item in copy) {
+            if (item !is MarkerItem) continue
+            val uidStr = item.uid?.toString()
+            if (uidStr.isNullOrEmpty() || uidStr == "pin" || uidStr == "__location__") continue
+            val isSelected = uidStr == selectedBusinessId
+            val color = markerColorFor(uidStr)
+            val bmp = createCircleBitmap(if (isSelected) 40 else 36, color, isSelected)
+            item.setMarker(MarkerSymbol(AndroidBitmap(bmp), MarkerSymbol.HotspotPlace.CENTER))
+            if (isSelected) {
+                selectedItem = item
+            }
+        }
+        // Move selected marker to top layer so it draws above everything
+        if (selectedItem != null) {
+            businessLayer.removeItem(selectedItem)
+            selectedLayer.addItem(selectedItem)
+        }
+        if (changed) {
+            selectedLayer.update()
+            businessLayer.update()
+            mapView.map().updateMap(true)
+        }
+    }
+
+    private fun setMarkers(lista: List<Map<String, Any?>>?) {
+        businessMarkers.clear()
+        val toRemove = mutableListOf<MarkerInterface>()
+        for (item in businessLayer.itemList) {
+            val uid = (item as? MarkerItem)?.uid?.toString()
+            if (uid != "pin" && uid != "__location__") toRemove.add(item)
+        }
+        for (item in toRemove) businessLayer.removeItem(item)
+        val toRemoveSel = mutableListOf<MarkerInterface>()
+        for (item in selectedLayer.itemList) toRemoveSel.add(item)
+        for (item in toRemoveSel) selectedLayer.removeItem(item)
+
+        if (lista != null) {
+            for (m in lista) {
+                val lat = m["lat"] as? Double ?: continue
+                val lon = m["lon"] as? Double ?: continue
+                val nombre = m["nombre"] as? String ?: ""
+                val id = m["id"] as? String ?: ""
+                val imageBytes = m["imageBytes"] as? ByteArray
+
+                businessMarkers.add(BusinessMarker(id, nombre, lat, lon))
+
+                val gp = GeoPoint(lat, lon)
+                val item = MarkerItem(id, nombre, "", gp)
+                val bmp = if (imageBytes != null) {
+                    val opts = BitmapFactory.Options().apply { inSampleSize = 2 }
+                    val src = BitmapFactory.decodeByteArray(imageBytes, 0, imageBytes.size, opts)
+                    createCircleBitmap(36, markerColorFor(id)).let { circle ->
+                        val composite = android.graphics.Bitmap.createBitmap(circle.width, circle.height, android.graphics.Bitmap.Config.ARGB_8888)
+                        val c = android.graphics.Canvas(composite)
+                        val r = circle.width / 2f
+                        c.drawBitmap(circle, 0f, 0f, null)
+                        val clip = android.graphics.Path().apply {
+                            addCircle(r, r, r - 4f, android.graphics.Path.Direction.CW)
+                        }
+                        c.save()
+                        c.clipPath(clip)
+                        val s = (r - 4f) * 2f / Math.max(src.width, src.height)
+                        val sw = src.width * s
+                        val sh = src.height * s
+                        c.drawBitmap(src, r - sw / 2f, r - sh / 2f, null)
+                        c.restore()
+                        composite
+                    }
+                } else {
+                    createCircleBitmap(36, markerColorFor(id))
+                }
+                item.setMarker(MarkerSymbol(AndroidBitmap(bmp), MarkerSymbol.HotspotPlace.CENTER))
+                businessLayer.addItem(item)
+            }
+        }
+        updateSelectedMarker()
+    }
+
+    private fun cargarMapa(lat: Double, lon: Double, zoom: Int, tema: String) {
         try {
             val mapFile = copiarAsset("flutter_assets/assets/maps/cuba.map", "cuba.map")
-
-            val tileCache = AndroidUtil.createTileCache(
-                context, "maincache",
-                mapView.model.displayModel.tileSize, 1f,
-                mapView.model.frameBufferModel.overdrawFactor
-            )
-
-            val layer = TileRendererLayer(
-                tileCache, MapFile(mapFile),
-                mapView.model.mapViewPosition,
-                AndroidGraphicFactory.INSTANCE
-            )
-
-            val temaStream: InputStream =
-                context.assets.open("flutter_assets/assets/maps/osmarender.xml")
-            layer.setXmlRenderTheme(StreamRenderTheme("/", temaStream))
-
-            tileRendererLayer = layer
-            mapView.layerManager.layers.add(layer)
-
-            mapView.setCenter(LatLong(lat, lon))
-            mapView.setZoomLevel(zoom)
-
+            val tileSource = MapFileTileSource()
+            val fis = FileInputStream(mapFile)
+            tileSource.setMapFileInputStream(fis)
+            tileLayer = mapView.map().setBaseMap(tileSource) as? org.oscim.layers.tile.vector.VectorTileLayer
+            tileLayer?.let { tl ->
+                mapView.map().layers().add(BuildingLayer(mapView.map(), tl))
+                mapView.map().layers().add(LabelLayer(mapView.map(), tl))
+            }
+            aplicarTema(tema)
+            mapView.map().setMapPosition(lat, lon, (1 shl zoom).toDouble())
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    private fun aplicarTema(tema: String) {
+        try {
+            val stream = context.assets.open("vtm/$tema.xml")
+            val theme = StreamRenderTheme("", stream)
+            mapView.map().setTheme(theme)
+            android.util.Log.d("VtmMap", "Tema aplicado: $tema")
+        } catch (e: Exception) {
+            android.util.Log.e("VtmMap", "Error al aplicar tema $tema: $e")
         }
     }
 
@@ -295,230 +595,9 @@ class VtmMapView(
     }
 
     override fun dispose() {
-        tileRendererLayer?.onDestroy()
-        mapView.destroyAll()
+        pulseAnimator?.cancel()
+        mapView.onPause()
+        mapView.map().destroy()
         methodChannel.setMethodCallHandler(null)
-    }
-
-    private inner class PinView(context: Context) : View(context) {
-        var pinLatLong: LatLong? = null
-        var pinBitmap: Bitmap? = null
-        var pinSelected = false
-        var touchStartX = 0f
-        var touchStartY = 0f
-        var isDragging = false
-        private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val pinPath = Path()
-        private val clipPath = Path()
-        private val imgRect = RectF()
-        private val density: Float
-        private var glowProgress = 0.3f
-        private val glowAnimator = ValueAnimator.ofFloat(0.3f, 1.0f).apply {
-            duration = 1000
-            repeatMode = ValueAnimator.REVERSE
-            repeatCount = ValueAnimator.INFINITE
-            interpolator = AccelerateDecelerateInterpolator()
-            addUpdateListener {
-                glowProgress = animatedValue as Float
-                invalidate()
-            }
-        }
-
-        init {
-            fillPaint.style = Paint.Style.FILL
-            strokePaint.style = Paint.Style.STROKE
-            density = context.resources.displayMetrics.density
-        }
-
-        fun startGlow() {
-            if (!glowAnimator.isStarted) glowAnimator.start()
-        }
-
-        fun stopGlow() {
-            glowAnimator.cancel()
-            glowProgress = 0.3f
-            invalidate()
-        }
-
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-            if (width <= 0 || height <= 0) return
-
-            val zoom = mapView.model.mapViewPosition.zoomLevel.toInt()
-            val tileSize = mapView.model.displayModel.tileSize
-            val mapSize = tileSize.toDouble() * 2.0.pow(zoom)
-            val center = mapView.model.mapViewPosition.center
-
-            val centerLatRad = center.latitude * PI / 180.0
-            val centerWPX = (center.longitude + 180.0) / 360.0 * mapSize
-            val centerWPY =
-                (1.0 - ln(tan(centerLatRad) + 1.0 / cos(centerLatRad)) / PI) / 2.0 * mapSize
-
-            // My location blue dot
-            val myPos = myLatLong
-            if (myPos != null) {
-                val myLatRad = myPos.latitude * PI / 180.0
-                val myWPX = (myPos.longitude + 180.0) / 360.0 * mapSize
-                val myWPY = (1.0 - ln(tan(myLatRad) + 1.0 / cos(myLatRad)) / PI) / 2.0 * mapSize
-                val mx = (width / 2.0 + (myWPX - centerWPX)).toFloat()
-                val my = (height / 2.0 + (myWPY - centerWPY)).toFloat()
-                val mr = 12f
-                fillPaint.color = Color.argb(30, 33, 150, 243)
-                canvas.drawCircle(mx, my, mr * 2.2f, fillPaint)
-                fillPaint.color = Color.WHITE
-                canvas.drawCircle(mx, my, mr, fillPaint)
-                fillPaint.color = Color.parseColor("#2196F3")
-                canvas.drawCircle(mx, my, mr * 0.7f, fillPaint)
-            }
-
-            // Business markers — modern circles with image
-            var selectedBm: BusinessMarker? = null
-            for (bm in businessMarkers) {
-                if (bm.id == selectedBusinessId) {
-                    selectedBm = bm
-                    continue
-                }
-                val bmLatRad = bm.lat * PI / 180.0
-                val bmWPX = (bm.lon + 180.0) / 360.0 * mapSize
-                val bmWPY = (1.0 - ln(tan(bmLatRad) + 1.0 / cos(bmLatRad)) / PI) / 2.0 * mapSize
-                val bx = (width / 2.0 + (bmWPX - centerWPX)).toFloat()
-                val by = (height / 2.0 + (bmWPY - centerWPY)).toFloat()
-                drawMarker(canvas, bx, by, 18f * density, bm, false)
-            }
-            // Selected marker on top with glow
-            if (selectedBm != null) {
-                val bmLatRad = selectedBm.lat * PI / 180.0
-                val bmWPX = (selectedBm.lon + 180.0) / 360.0 * mapSize
-                val bmWPY = (1.0 - ln(tan(bmLatRad) + 1.0 / cos(bmLatRad)) / PI) / 2.0 * mapSize
-                val bx = (width / 2.0 + (bmWPX - centerWPX)).toFloat()
-                val by = (height / 2.0 + (bmWPY - centerWPY)).toFloat()
-                drawMarker(canvas, bx, by, 22f * density, selectedBm, true)
-            }
-
-            // Teardrop pin
-            val pos = pinLatLong ?: return
-            val pinLatRad = pos.latitude * PI / 180.0
-            val pinWPX = (pos.longitude + 180.0) / 360.0 * mapSize
-            val pinWPY =
-                (1.0 - ln(tan(pinLatRad) + 1.0 / cos(pinLatRad)) / PI) / 2.0 * mapSize
-
-            val sx = (width / 2.0 + (pinWPX - centerWPX)).toFloat()
-            val sy = (height / 2.0 + (pinWPY - centerWPY)).toFloat()
-
-            val dp = density
-            val sel = if (pinSelected) 1.12f else 1f
-            val bodyR = 15f * dp * sel
-            val tipH = 12f * dp * sel
-            val imgR = 14f * dp
-            val borde = 2.5f * dp
-
-            // Teardrop path — anchor at bottom tip (sx, sy)
-            pinPath.reset()
-            pinPath.moveTo(sx, sy - 2.3f * bodyR - tipH)
-            pinPath.cubicTo(
-                sx - 1.3f * bodyR, sy - 2.3f * bodyR - tipH,
-                sx - 1.5f * bodyR, sy - 0.2f * bodyR - tipH,
-                sx - 0.7f * bodyR, sy + 0.2f * bodyR - tipH
-            )
-            pinPath.lineTo(sx - 6f * dp * sel, sy - tipH * 0.5f)
-            pinPath.lineTo(sx, sy)
-            pinPath.lineTo(sx + 6f * dp * sel, sy - tipH * 0.5f)
-            pinPath.lineTo(sx + 0.7f * bodyR, sy + 0.2f * bodyR - tipH)
-            pinPath.cubicTo(
-                sx + 1.5f * bodyR, sy - 0.2f * bodyR - tipH,
-                sx + 1.3f * bodyR, sy - 2.3f * bodyR - tipH,
-                sx, sy - 2.3f * bodyR - tipH
-            )
-            pinPath.close()
-
-            // Shadow beneath pin
-            fillPaint.color = Color.argb(50, 0, 0, 0)
-            canvas.drawOval(sx - bodyR * 0.5f, sy + 4f * dp, sx + bodyR * 0.5f, sy + 10f * dp, fillPaint)
-
-            // Pin body — red teardrop
-            fillPaint.color = Color.parseColor(if (pinSelected) "#FF1A1A" else "#FF3B30")
-            canvas.drawPath(pinPath, fillPaint)
-
-            // White border around teardrop
-            strokePaint.color = Color.WHITE
-            strokePaint.strokeWidth = borde
-            canvas.drawPath(pinPath, strokePaint)
-
-            // Image cutout — center of the circular head
-            val imgCx = sx
-            val imgCy = sy - tipH - 1.05f * bodyR
-
-            // White disc behind image (the "hole")
-            fillPaint.color = Color.WHITE
-            canvas.drawCircle(imgCx, imgCy, imgR + borde, fillPaint)
-
-            val bmp = pinBitmap
-            if (bmp != null) {
-                clipPath.reset()
-                clipPath.addCircle(imgCx, imgCy, imgR, Path.Direction.CW)
-                canvas.save()
-                canvas.clipPath(clipPath)
-                imgRect.set(imgCx - imgR, imgCy - imgR, imgCx + imgR, imgCy + imgR)
-                canvas.drawBitmap(bmp, null, imgRect, null)
-                canvas.restore()
-            } else {
-                fillPaint.color = Color.parseColor("#F5F5F5")
-                canvas.drawCircle(imgCx, imgCy, imgR, fillPaint)
-                fillPaint.color = Color.parseColor("#BDBDBD")
-                canvas.drawCircle(imgCx, imgCy, imgR * 0.35f, fillPaint)
-            }
-
-            // White border around image circle
-            strokePaint.color = Color.WHITE
-            strokePaint.strokeWidth = borde
-            canvas.drawCircle(imgCx, imgCy, imgR, strokePaint)
-        }
-
-        private fun drawMarker(canvas: Canvas, bx: Float, by: Float, radius: Float,
-                                bm: BusinessMarker, selected: Boolean) {
-            val dp = density
-
-            if (selected) {
-                val g = glowProgress
-                val alpha1 = (g * 55).toInt().coerceIn(0, 255)
-                val alpha2 = (g * 80).toInt().coerceIn(0, 255)
-                val rMul = 1.6f + g * 1.0f
-
-                fillPaint.color = Color.argb(alpha1, 33, 150, 243)
-                canvas.drawCircle(bx, by, radius * rMul, fillPaint)
-                fillPaint.color = Color.argb(alpha2, 33, 150, 243)
-                canvas.drawCircle(bx, by, radius * (rMul - 0.4f), fillPaint)
-            }
-
-            // Shadow
-            fillPaint.color = Color.argb(40, 0, 0, 0)
-            canvas.drawCircle(bx, by + 2f * dp, radius * 0.85f, fillPaint)
-
-            // White base
-            fillPaint.color = Color.WHITE
-            canvas.drawCircle(bx, by, radius, fillPaint)
-
-            val bmp = bm.bitmap
-            if (bmp != null) {
-                clipPath.reset()
-                clipPath.addCircle(bx, by, radius - 2f * dp, Path.Direction.CW)
-                canvas.save()
-                canvas.clipPath(clipPath)
-                imgRect.set(bx - radius + 2f * dp, by - radius + 2f * dp,
-                    bx + radius - 2f * dp, by + radius - 2f * dp)
-                canvas.drawBitmap(bmp, null, imgRect, null)
-                canvas.restore()
-            } else {
-                val hue = (bm.id.hashCode() and 0x7FFFFFFF) % 360
-                fillPaint.color = Color.HSVToColor(floatArrayOf(hue.toFloat(), 0.55f, 0.85f))
-                canvas.drawCircle(bx, by, radius - 2f * dp, fillPaint)
-            }
-
-            // Circle border
-            strokePaint.color = Color.WHITE
-            strokePaint.strokeWidth = 2f * dp
-            canvas.drawCircle(bx, by, radius, strokePaint)
-        }
     }
 }

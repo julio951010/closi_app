@@ -36,11 +36,14 @@ android {
 }
 
 dependencies {
-    // Mapsforge - lector de archivos .map + renderizado en Android
-    implementation("org.mapsforge:mapsforge-core:0.25.0")
-    implementation("org.mapsforge:mapsforge-map:0.25.0")
-    implementation("org.mapsforge:mapsforge-map-android:0.25.0")
-    implementation("org.mapsforge:mapsforge-themes:0.25.0")
+    // VTM — OpenGL vector map (reemplaza MapsForge)
+    implementation("org.mapsforge:vtm-android:0.25.0:natives-armeabi-v7a")
+    implementation("org.mapsforge:vtm-android:0.25.0:natives-arm64-v8a")
+    implementation("org.mapsforge:vtm-android:0.25.0:natives-x86")
+    implementation("org.mapsforge:vtm-android:0.25.0:natives-x86_64")
+    implementation("org.mapsforge:vtm-android:0.25.0")
+    // SVG icons para los temas VTM
+    implementation("com.caverock:androidsvg:1.4")
 }
 
 flutter {

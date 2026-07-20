@@ -18,7 +18,7 @@ class Favorito {
       id: map['id'] as String,
       usuarioId: map['usuario_id'] as String,
       negocioId: map['negocio_id'] as String,
-      fecha: DateTime.parse(map['fecha'] as String),
+      fecha: map['fecha'] != null ? DateTime.tryParse(map['fecha'] as String) ?? DateTime.now() : DateTime.now(),
       estadoSync: map['estado_sync'] as String? ?? 'pendiente',
     );
   }
